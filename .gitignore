@@ -1,6 +1,6 @@
 .DS_Store
 .idea/
 data/
-save/
+save*/
 __pycache__
 simple-examples/

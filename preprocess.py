@@ -2,9 +2,11 @@ import os
 import re
 import collections
 
-TRAIN_PATH = '../Markov/train/'
-VALID_PATH = '../Markov/valid/'
-TEST_PATH = '../Markov/test/'
+DATA_PATH = '../data/'
+
+TRAIN_PATH = DATA_PATH + 'train/'
+VALID_PATH = DATA_PATH + 'valid/'
+TEST_PATH = DATA_PATH + 'test/'
 
 punc = ['\n', '“', '”', '[', ']']
 punc_pattern = r"([。！？\s+]/w)"
@@ -56,7 +58,7 @@ def articles_to_sentence_file(path, thres, is_training, train_cnter=None):
             if counter[w] < thres:  # 降低vocab_size的大小，当thres=6时训练集的vocab_size = 11250 + 1（原来为49003）
                 f.write('<unk> ')
                 continue
-            elif not is_training and w not in train_counter:  # 对于valid和test，不在训练集中出现的高频词也记为<unk>
+            elif not is_training and w not in train_cnter:  # 对于valid和test，不在训练集中出现的高频词也记为<unk>
                 f.write('<unk> ')
                 continue
             f.write(w + ' ')

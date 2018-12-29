@@ -73,7 +73,7 @@ flags = tf.flags
 logging = tf.logging
 
 flags.DEFINE_string(
-    "model", "small",
+    "model", "medium",
     "A type of model. Possible options are: small, medium, large.")
 flags.DEFINE_string("data_path", "./data/",
                     "Where the training/test data is stored.")
@@ -81,7 +81,7 @@ flags.DEFINE_string("save_path", "./save/",
                     "Model output directory.")
 flags.DEFINE_bool("use_fp16", False,
                   "Train using 16-bit floats instead of 32bit floats")
-flags.DEFINE_integer("num_gpus", 0,
+flags.DEFINE_integer("num_gpus", 1,
                      "If larger than 1, Grappler AutoParallel optimizer "
                      "will create multiple training replicas with each GPU "
                      "running one replica.")
@@ -129,7 +129,7 @@ class PTBModel(object):
       embedding = tf.get_variable(
           "embedding", [vocab_size, size], dtype=data_type())
       inputs = tf.nn.embedding_lookup(embedding, input_.input_data)
-      # inputs.shape: (batch_size, num_steps, hidden_size/embedding_size)
+      # inputs.shape: (batch_size, num_steps, hidden_size也就是embedding_size)
 
     if is_training and config.keep_prob < 1:
       inputs = tf.nn.dropout(inputs, config.keep_prob)
@@ -144,9 +144,10 @@ class PTBModel(object):
     logits = tf.reshape(logits, [self.batch_size, self.num_steps, vocab_size])
 
     # Use the contrib sequence loss and average over the batches
+    # https://blog.csdn.net/xyz1584172808/article/details/83056179 讲解得十分清楚
     loss = tf.contrib.seq2seq.sequence_loss(
         logits,
-        input_.targets,
+        input_.targets,  # shape = (batch_size, num_steps)=(20, 20)，在sequence_loss函数中会把它reshape为(20*20,)=(400,)
         tf.ones([self.batch_size, self.num_steps], dtype=data_type()),
         average_across_timesteps=False,
         average_across_batch=True)
@@ -162,6 +163,10 @@ class PTBModel(object):
     tvars = tf.trainable_variables()
     grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars),
                                       config.max_grad_norm)
+    # Gradient Clipping的引入是为了处理gradient explosion或者gradients vanishing的问题。
+    # 当在一次迭代中权重的更新过于迅猛的话，很容易导致loss divergence。
+    # Gradient Clipping的直观作用就是让权重的更新限制在一个合适的范围。
+    # https://blog.csdn.net/yiqingyang2012/article/details/68942948
     optimizer = tf.train.GradientDescentOptimizer(self._lr)
     self._train_op = optimizer.apply_gradients(
         zip(grads, tvars),
@@ -245,13 +250,13 @@ class PTBModel(object):
         outputs.append(cell_output)
     output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
     # output.shape = (batch_size * num_steps, hidden_size(也就是word embedding的长度如200维))
-    # state = (c, h) "memory_cell, hidden_state"，分别为(batch_size * hidden_size)，含义参见LSTM的公式
+    # state = (h1, h2) 它们的shape分别为(batch_size, hidden_size)，是第1层和第2层LSTM cell的隐状态
     return output, state
 
   def assign_lr(self, session, lr_value):
     session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
 
-  def export_ops(self, name):  # TODO:
+  def export_ops(self, name):
     """Exports ops to collections."""
     self._name = name
     ops = {util.with_prefix(self._name, "cost"): self._cost}
@@ -260,7 +265,7 @@ class PTBModel(object):
       if self._rnn_params:
         ops.update(rnn_params=self._rnn_params)
     for name, op in ops.items():
-      tf.add_to_collection(name, op)
+      tf.add_to_collection(name, op)  # 向当前计算图中添加张量集合
     self._initial_state_name = util.with_prefix(self._name, "initial")
     self._final_state_name = util.with_prefix(self._name, "final")
     util.export_state_tuples(self._initial_state, self._initial_state_name)
@@ -274,7 +279,7 @@ class PTBModel(object):
       self._new_lr = tf.get_collection_ref("new_lr")[0]
       self._lr_update = tf.get_collection_ref("lr_update")[0]
       rnn_params = tf.get_collection_ref("rnn_params")
-      if self._cell and rnn_params:
+      if self._cell and rnn_params:  # for CudnnLSTM
         params_saveable = tf.contrib.cudnn_rnn.RNNParamsSaveable(
             self._cell,
             self._cell.params_to_canonical,
@@ -329,7 +334,7 @@ class SmallConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 20
-  hidden_size = 200
+  hidden_size = 100
   max_epoch = 4
   max_max_epoch = 13
   keep_prob = 1.0
@@ -347,7 +352,8 @@ class MediumConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 35
-  hidden_size = 650
+  # hidden_size = 650
+  hidden_size = 500
   max_epoch = 6
   max_max_epoch = 39
   keep_prob = 0.5
@@ -470,6 +476,7 @@ def main(_):
   eval_config.batch_size = 1
   eval_config.num_steps = 1
 
+  # 输入数据并制作计算图（构建模型）
   with tf.Graph().as_default():
     initializer = tf.random_uniform_initializer(-config.init_scale,
                                                 config.init_scale)
@@ -478,7 +485,7 @@ def main(_):
       train_input = PTBInput(config=config, data=train_data, name="TrainInput")   # reader里的x, y 即input_data, target
       with tf.variable_scope("Model", reuse=None, initializer=initializer):
         m = PTBModel(is_training=True, config=config, input_=train_input)
-      tf.summary.scalar("Training Loss", m.cost)
+      tf.summary.scalar("Training Loss", m.cost)    # 记录tensorboard
       tf.summary.scalar("Learning Rate", m.lr)
 
     with tf.name_scope("Valid"):
@@ -491,8 +498,7 @@ def main(_):
       test_input = PTBInput(
           config=eval_config, data=test_data, name="TestInput")
       with tf.variable_scope("Model", reuse=True, initializer=initializer):
-        mtest = PTBModel(is_training=False, config=eval_config,
-                         input_=test_input)
+        mtest = PTBModel(is_training=False, config=eval_config, input_=test_input)
 
     models = {"Train": m, "Valid": mvalid, "Test": mtest}
     for name, model in models.items():
@@ -506,6 +512,7 @@ def main(_):
       soft_placement = True
       util.auto_parallel(metagraph, m)
 
+  # 载入三个模型并开始训练
   with tf.Graph().as_default():
     tf.train.import_meta_graph(metagraph)
     for model in models.values():
@@ -524,7 +531,7 @@ def main(_):
         valid_perplexity = run_epoch(session, mvalid)
         print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-      test_perplexity = run_epoch(session, mtest)
+      test_perplexity = run_epoch(session, mtest)  # TODO: 为什么这里的mvalid、mtest模型看上去和m是独立的两个模型，实际上却"继承"了m的训练结果？
       print("Test Perplexity: %.3f" % test_perplexity)
 
       if FLAGS.save_path:
