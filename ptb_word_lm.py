@@ -73,7 +73,7 @@ flags = tf.flags
 logging = tf.logging
 
 flags.DEFINE_string(
-    "model", "medium",
+    "model", "small",
     "A type of model. Possible options are: small, medium, large.")
 flags.DEFINE_string("data_path", "./data/",
                     "Where the training/test data is stored.")
@@ -334,7 +334,7 @@ class SmallConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 20
-  hidden_size = 100
+  hidden_size = 50
   max_epoch = 4
   max_max_epoch = 13
   keep_prob = 1.0
@@ -517,6 +517,10 @@ def main(_):
     tf.train.import_meta_graph(metagraph)
     for model in models.values():
       model.import_ops()
+    # Supervisor模块集成了多个功能：
+    # 1）自动去checkpoint加载数据或初始化数据 ，因此我们就不需要手动初始化或者从checkpoint中加载数据
+    # 2）自身有一个Saver，可以用来保存checkpoint，因此不需要创建Saver，直接使用Supervisor里的Saver即可
+    # 3）有一个summary_computed用来保存Summary，因此不需要创建summary_writer
     sv = tf.train.Supervisor(logdir=FLAGS.save_path)
     config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
     with sv.managed_session(config=config_proto) as session:
