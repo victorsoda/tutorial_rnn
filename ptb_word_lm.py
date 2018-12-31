@@ -536,7 +536,7 @@ def main(_):
         print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
       test_perplexity = run_epoch(session, mtest)  # TODO: 为什么这里的mvalid、mtest模型看上去和m是独立的两个模型，实际上却"继承"了m的训练结果？
-      print("Test Perplexity: %.3f" % test_perplexity)
+      print("Test Perplexity: %.3f" % test_perplexity)  # tf.variable_scope("Model", reuse=True, ..) 复用了参数
 
       if FLAGS.save_path:
         print("Saving model to %s." % FLAGS.save_path)
